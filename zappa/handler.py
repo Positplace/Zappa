@@ -17,7 +17,7 @@ import tarfile
 
 from builtins import str
 from werkzeug.wrappers import Response
-from boto3.s3.transfer import S3Transfer
+from boto3.s3.transfer import S3Transfer, TransferConfig
 
 # This file may be copied into a project's root,
 # so handle both scenarios.
@@ -48,6 +48,7 @@ class LambdaHandler(object):
     settings = None
     settings_name = None
     session = None
+    instanced = None
 
     # Application
     app_module = None
@@ -60,7 +61,7 @@ class LambdaHandler(object):
             if sys.version_info[0] < 3:
                 LambdaHandler.__instance = object.__new__(cls, settings_name, session)
             else:
-                print("Instancing..")
+                print("Instancing...")
                 LambdaHandler.__instance = object.__new__(cls)
         return LambdaHandler.__instance
 
@@ -72,6 +73,7 @@ class LambdaHandler(object):
             self.settings = importlib.import_module(settings_name)
             self.settings_name = settings_name
             self.session = session
+            self.transfer_client = None
 
             # Custom log level
             if self.settings.LOG_LEVEL:
@@ -112,16 +114,18 @@ class LambdaHandler(object):
 
             included_libraries = getattr(self.settings, 'INCLUDE', [])
             try:
-                from ctypes import cdll, util
+                # from ctypes import cdll, util
                 for library in included_libraries:
-                    if library.startswith('s3://'):
-                        library_filename = os.path.basename(library)
+                    if library.startswith('https://'):
+                        library_filename = library.split('/')[-1]
                         self.load_remote_included_library(library, library_filename)
-                        library = library_filename
-                    try:
-                        cdll.LoadLibrary(os.path.join(os.getcwd(), library))
-                    except OSError:
-                        print ("Failed to find library...right filename?")
+                # for library in included_libraries:
+                #     if library.startswith('https://'):
+                #         library = os.path.join('/tmp/', os.path.basename(library))
+                #     # try:
+                #     #     cdll.LoadLibrary(library)
+                #     # except OSError:
+                #     #     print ("Failed to find library...right filename?", library)
             except ImportError:
                 print ("Failed to import ctypes library")
 
@@ -151,6 +155,7 @@ class LambdaHandler(object):
                 self.trailing_slash = True
 
             self.wsgi_app = ZappaWSGIMiddleware(wsgi_app_function)
+            self.instanced = True
 
     def load_remote_project_archive(self, project_zip_path):
         """
@@ -184,18 +189,28 @@ class LambdaHandler(object):
         """
         Pulls the `include`-d library from S3.
         """
-        local_library_filename = os.path.join(os.getcwd(), local_library_filename)
+        local_library_filename = os.path.join('/tmp/', local_library_filename)
         if not os.path.exists(local_library_filename):
-            if not self.session:
-                boto_session = boto3.Session()
-            else:
-                boto_session = self.session
 
-            transfer_client = S3Transfer(boto_session.client('s3'))
+            os.system('curl -s -o %s %s' % (local_library_filename, remote_included_library_path))
 
-            # Download library file from S3
-            remote_bucket, remote_file = parse_s3_url(remote_included_library_path)
-            transfer_client.download_file(remote_bucket, remote_file, local_library_filename)
+            # if not self.session:
+            #     boto_session = boto3.Session()
+            # else:
+            #     boto_session = self.session
+            # if not self.transfer_client:
+            #     boto_transfer_client = S3Transfer(boto_session.client('s3'), TransferConfig(
+            #         max_io_queue=10,
+            #         multipart_chunksize=1024*1024,
+            #         max_concurrency=2,
+            #     ))
+            #     self.transfer_client = boto_transfer_client
+            # else:
+            #     boto_transfer_client = self.transfer_client
+
+            # # Download library file from S3
+            # remote_bucket, remote_file = parse_s3_url(remote_included_library_path)
+            # boto_transfer_client.download_file(remote_bucket, remote_file, local_library_filename)
 
         return True
 
@@ -363,8 +378,8 @@ class LambdaHandler(object):
             whole_function = event['command']
             app_function = self.import_module_and_get_function(whole_function)
             result = self.run_function(app_function, event, context)
-            print("Result of %s:" % whole_function)
-            print(result)
+            if str(whole_function) != 'zappa.async.route_lambda_task':
+                print("Result of %s:" % whole_function, result)
             return result
 
         # This is a direct, raw python invocation.
