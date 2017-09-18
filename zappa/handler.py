@@ -184,6 +184,7 @@ class LambdaHandler(object):
         """
         Pulls the `include`-d library from S3.
         """
+        local_library_filename = os.path.join(os.getcwd(), local_library_filename)
         if not os.path.exists(local_library_filename):
             if not self.session:
                 boto_session = boto3.Session()
