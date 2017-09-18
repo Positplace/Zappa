@@ -17,6 +17,7 @@ import tarfile
 
 from builtins import str
 from werkzeug.wrappers import Response
+from boto3.s3.transfer import S3Transfer
 
 # This file may be copied into a project's root,
 # so handle both scenarios.
@@ -108,17 +109,21 @@ class LambdaHandler(object):
             # checks if we are the slim_handler since this is not needed otherwise
             # https://github.com/Miserlou/Zappa/issues/776
             is_slim_handler = getattr(self.settings, 'SLIM_HANDLER', False)
-            if is_slim_handler:
-                included_libraries = getattr(self.settings, 'INCLUDE', ['libmysqlclient.so.18'])
-                try:
-                    from ctypes import cdll, util
-                    for library in included_libraries:
-                        try:
-                            cdll.LoadLibrary(os.path.join(os.getcwd(), library))
-                        except OSError:
-                            print ("Failed to find library...right filename?")
-                except ImportError:
-                    print ("Failed to import cytpes library")
+
+            included_libraries = getattr(self.settings, 'INCLUDE', [])
+            try:
+                from ctypes import cdll, util
+                for library in included_libraries:
+                    if library.startswith('s3://'):
+                        library_filename = os.path.basename(library)
+                        self.load_remote_included_library(library, library_filename)
+                        library = library_filename
+                    try:
+                        cdll.LoadLibrary(os.path.join(os.getcwd(), library))
+                    except OSError:
+                        print ("Failed to find library...right filename?")
+            except ImportError:
+                print ("Failed to import ctypes library")
 
             # This is a non-WSGI application
             # https://github.com/Miserlou/Zappa/pull/748
@@ -173,6 +178,24 @@ class LambdaHandler(object):
         # Change working directory to project folder
         # Related: https://github.com/Miserlou/Zappa/issues/702
         os.chdir(project_folder)
+        return True
+
+    def load_remote_included_library(self, remote_included_library_path, local_library_filename):
+        """
+        Pulls the `include`-d library from S3.
+        """
+        if not os.path.exists(local_library_filename):
+            if not self.session:
+                boto_session = boto3.Session()
+            else:
+                boto_session = self.session
+
+            transfer_client = S3Transfer(boto_session.client('s3'))
+
+            # Download library file from S3
+            remote_bucket, remote_file = parse_s3_url(remote_included_library_path)
+            transfer.download_file(remote_bucket, remote_file, local_library_filename)
+
         return True
 
     def load_remote_settings(self, remote_bucket, remote_file):
