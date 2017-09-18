@@ -195,7 +195,7 @@ class LambdaHandler(object):
 
             # Download library file from S3
             remote_bucket, remote_file = parse_s3_url(remote_included_library_path)
-            transfer.download_file(remote_bucket, remote_file, local_library_filename)
+            transfer_client.download_file(remote_bucket, remote_file, local_library_filename)
 
         return True
 
